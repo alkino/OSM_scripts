@@ -14,6 +14,8 @@
 # {changeset} will be replace by the number of the changeset
 # Be aware of never put {XXX} in your message!
 
+# It will not post comment is there i already some comments or if a review is requested. But PM will be sent.
+
 # You can launch it with cron every week.
 # @weekly python3 /path/to/welcome_newcomers.py $user $password "Welcome {user}!" $file1 $file2
 
@@ -77,6 +79,19 @@ def commentchangeset(session, user, changeset, msg):
         raise Exception('OSM POST status ' + str(r.status_code))
     print('Comment posted on changeset "'+str(changeset)+'".')
 
+def changesetisvalid(session, changeset):
+    r = session.get('https://www.openstreetmap.org/api/0.6/changeset/'+str(changeset))
+    if r.status_code != 200:
+        raise Exception('OSM POST status ' + str(r.status_code))
+
+    root = ET.fromstring(r.text)
+    token = root.find("./changeset")
+    if token.attrib.get('comments_count', '0') != '0':
+        return False
+
+    token = root.find(".//tag[@k='review_requested']")
+    return token is None or token.attrib.get('v', 'no') != 'yes'
+
 def getuserlist(url):
     regex = re.compile('https://openstreetmap.org/changeset/([0-9]+)')
     r = requests.get("http://resultmaps.neis-one.org/newestosmcountryfeed?c=France")
@@ -89,6 +104,7 @@ def getuserlist(url):
         yield username, changeset
 
 if __name__ == "__main__":
+
     user = sys.argv[1]
     password = sys.argv[2]
     title = sys.argv[3]
@@ -104,5 +120,7 @@ if __name__ == "__main__":
     login(s, user, password)  # login for PM
     for user, changeset in getuserlist("http://resultmaps.neis-one.org/newestosmcountryfeed?c=France"):
         sendusermsg(s, user, changeset, title, PM)
+        if not changesetisvalid(s, changeset):
+            continue
         commentchangeset(s, user, int(changeset), comment)
 
