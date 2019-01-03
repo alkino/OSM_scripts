@@ -3,16 +3,9 @@
 
 # This script is python 3 and depends on requests library.
 
-# It is waiting 5 arguments:
-# 1) Your OSM email address
-# 2) Your OSM password
-# 3) A title for PM
-# 4) A file with a message for PM
-# 5) A file with a message for comment
-# You can have variable subsitued in last 3 arguments
+# You can have variable subsitued in title, pm and comment.
 # {user} will be replace with the name of user
 # {changeset} will be replace by the number of the changeset
-# Be aware of never put {XXX} in your message!
 
 # It will not post comment is there i already some comments or if a review is requested. But PM will be sent.
 
@@ -21,6 +14,7 @@
 
 import re
 import sys
+import argparse
 import requests
 import xml.etree.ElementTree as ET
 
@@ -40,43 +34,45 @@ def login(session, user, passwd):
         raise Exception('OSM login POST status ' + str(r.status_code))
     print('You are connected as "{}".'.format(user))
 
-def sendusermsg(session, user, changeset, msgtitle, msg):
+def sendusermsg(session, user, changeset, msgtitle, msg, dry_run):
     msgtitle = msgtitle.format(user = user, changeset = changeset)
     msg = msg.format(user = user, changeset = changeset)
 
-    r = session.get('https://www.openstreetmap.org/message/new/' + user)
-    if r.status_code != 200:
-        raise Exception('OSM status ' + str(r.status_code))
-    root = ET.fromstring(r.text.replace('<br>', '<br />'))
-    fields = {}
-    token = root.findall(".//form[@id='new_message']//input")
-    for t in token:
-        fields[t.attrib['name']] = t.attrib.get('value', None)
-    fields['message[title]'] = msgtitle
-    fields['message[body]'] = msg
-    r = session.post('https://www.openstreetmap.org/messages', data = fields)
-    if r.status_code != 200:
-        raise Exception('OSM POST status ' + str(r.status_code))
-    if r.text.find('id="error"') > -1:
-        raise Exception('You sent too many messages, throttled')
-    if not r.url.find('/inbox'):
-        raise Exception('Did not get redirected to our Inbox, ' +
-                'something likely went wrong and you ' +
-                'need to retry.')
-    print('Message sent to "{}"'.format(user))
+    if not dry_run:
+        r = session.get('https://www.openstreetmap.org/message/new/' + user)
+        if r.status_code != 200:
+            raise Exception('OSM status ' + str(r.status_code))
+        root = ET.fromstring(r.text.replace('<br>', '<br />'))
+        fields = {}
+        token = root.findall(".//form[@id='new_message']//input")
+        for t in token:
+            fields[t.attrib['name']] = t.attrib.get('value', None)
+        fields['message[title]'] = msgtitle
+        fields['message[body]'] = msg
+        r = session.post('https://www.openstreetmap.org/messages', data = fields)
+        if r.status_code != 200:
+            raise Exception('OSM POST status ' + str(r.status_code))
+        if r.text.find('id="error"') > -1:
+            raise Exception('You sent too many messages, throttled')
+        if not r.url.find('/inbox'):
+            raise Exception('Did not get redirected to our Inbox, ' +
+                    'something likely went wrong and you ' +
+                    'need to retry.')
+    print('Message sent to "{}" with title "{}"'.format(user, msgtitle))
 
-def commentchangeset(session, user, changeset, msg):
-    msg = msg.format(user = user, changeset = changeset)
+def commentchangeset(session, user, changeset, msg, dry_run):
+    if not dry_run:
+        msg = msg.format(user = user, changeset = changeset)
 
-    r = session.get('https://www.openstreetmap.org/changeset/'+str(changeset))
-    if r.status_code != 200:
-        raise Exception('OSM status ' + str(r.status_code))
+        r = session.get('https://www.openstreetmap.org/changeset/'+str(changeset))
+        if r.status_code != 200:
+            raise Exception('OSM status ' + str(r.status_code))
 
-    fields = {}
-    fields['text'] = msg
-    r = session.post('https://www.openstreetmap.org/api/0.6/changeset/'+str(changeset)+'/comment', data = fields)
-    if r.status_code != 200:
-        raise Exception('OSM POST status ' + str(r.status_code))
+        fields = {}
+        fields['text'] = msg
+        r = session.post('https://www.openstreetmap.org/api/0.6/changeset/'+str(changeset)+'/comment', data = fields)
+        if r.status_code != 200:
+            raise Exception('OSM POST status ' + str(r.status_code))
     print('Comment posted on changeset "'+str(changeset)+'".')
 
 def changesetisvalid(session, changeset):
@@ -92,9 +88,9 @@ def changesetisvalid(session, changeset):
     token = root.find(".//tag[@k='review_requested']")
     return token is None or token.attrib.get('v', 'no') != 'yes'
 
-def getuserlist(url):
+def getuserlist(country):
     regex = re.compile('https://openstreetmap.org/changeset/([0-9]+)')
-    r = requests.get("http://resultmaps.neis-one.org/newestosmcountryfeed?c=France")
+    r = requests.get("http://resultmaps.neis-one.org/newestosmcountryfeed?c="+country)
 
     root = ET.fromstring(r.text)
 
@@ -104,23 +100,26 @@ def getuserlist(url):
         yield username, changeset
 
 if __name__ == "__main__":
-
-    user = sys.argv[1]
-    password = sys.argv[2]
-    title = sys.argv[3]
-    message_PM = sys.argv[4]
-    message_comment = sys.argv[5]
-    with open(message_PM, 'r') as h:
-        PM = h.read()
-    with open(message_comment, 'r') as h:
-        comment = h.read()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-u', '--user', help='Username to connect to osm.org', required=True)
+    parser.add_argument('-p', '--password', help='Password associated to user for connection', required=True)
+    parser.add_argument('-t', '--title', help='Title of the PM', default='Welcome to you!')
+    parser.add_argument('--pm-file', help='File of message for PM', type=argparse.FileType('r'))
+    parser.add_argument('--comment-file', help='File of message for comment', type=argparse.FileType('r'))
+    parser.add_argument('-c', '--country', help='Country for welcome new members', default='France')
+    parser.add_argument('-n', '--dry-run', help='Only print, but do not really send message', action='store_true')
+    parser.add_argument('--always-send-PM', help='Send PM event if changeset is considered invalid', action='store_true')
+    args = parser.parse_args()
 
     s = requests.Session()
-    s.auth = (user, password) # auth for API
-    login(s, user, password)  # login for PM
-    for user, changeset in getuserlist("http://resultmaps.neis-one.org/newestosmcountryfeed?c=France"):
-        sendusermsg(s, user, changeset, title, PM)
-        if not changesetisvalid(s, changeset):
-            continue
-        commentchangeset(s, user, int(changeset), comment)
+    s.auth = (args.user, args.password) # auth for API
+    login(s, args.user, args.password)  # login for PM
+    for user, changeset in getuserlist(args.country):
+        if changesetisvalid(s, changeset):
+            if args.pm_file:
+                sendusermsg(s, user, changeset, args.title, args.pm_file.read(), args.dry_run)
+            if args.comment_file:
+                commentchangeset(s, user, int(changeset), args.comment_file.read(), args.dry_run)
+        elif args.always_send_PM and args.pm_file:
+            sendusermsg(s, user, changeset, args.title, args.pm_file.read(), args.dry_run)
 
