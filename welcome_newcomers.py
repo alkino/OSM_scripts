@@ -23,10 +23,8 @@ def login(session, user, passwd):
     if r.status_code != 200:
         raise Exception('OSM login status ' + str(r.status_code))
     root = ET.fromstring(r.text)
-    fields = {}
     token = root.findall(".//form[@id='login_form']//input")
-    for t in token:
-        fields[t.attrib['name']] = t.attrib.get('value', None)
+    fields = {t.attrib['name']: t.attrib.get('value', None) for t in token}
     fields['username'] = user
     fields['password'] = passwd
     r = session.post('https://www.openstreetmap.org/login', data = fields)
@@ -43,10 +41,8 @@ def sendusermsg(session, user, changeset, msgtitle, msg, dry_run):
         if r.status_code != 200:
             raise Exception('OSM status ' + str(r.status_code))
         root = ET.fromstring(r.text.replace('<br>', '<br />'))
-        fields = {}
         token = root.findall(".//form[@id='new_message']//input")
-        for t in token:
-            fields[t.attrib['name']] = t.attrib.get('value', None)
+        fields = {t.attrib['name']: t.attrib.get('value', None) for t in token}
         fields['message[title]'] = msgtitle
         fields['message[body]'] = msg
         r = session.post('https://www.openstreetmap.org/messages', data = fields)
@@ -99,6 +95,19 @@ def getuserlist(country):
         changeset = regex.search(child.find('./{http://www.w3.org/2005/Atom}content').text).group(1)
         yield username, changeset
 
+def getfirstchangesetwithoutcomment(session, user):
+    r = session.get("https://api.openstreetmap.org/api/0.6/changesets?display_name="+user)
+    if r.status_code != 200:
+        raise Exception('OSM POST status ' + str(r.status_code))
+
+    root = ET.fromstring(r.text)
+    token = root.findall(".//changeset[@comments_count='0']")
+    for t in token[:-1]:
+        if t.find("tag[@k='review_requested']"):
+            continue
+        return t.attrib['id']
+    return None
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-u', '--user', help='Username to connect to osm.org', required=True)
@@ -122,6 +131,10 @@ if __name__ == "__main__":
                 sendusermsg(s, user, changeset, args.title, args.pm_file.read(), args.dry_run)
             if args.comment_file:
                 commentchangeset(s, user, int(changeset), args.comment_file.read(), args.dry_run)
-        elif args.always_send_PM and args.pm_file:
-            sendusermsg(s, user, changeset, args.title, args.pm_file.read(), args.dry_run)
+        else:
+            if args.always_send_PM and args.pm_file:
+                sendusermsg(s, user, changeset, args.title, args.pm_file.read(), args.dry_run)
+            changeset = getfirstchangesetwithoutcomment(s, user)
+            if changeset:
+                commentchangeset(s, user, int(changeset), args.comment_file.read(), args.dry_run)
 
