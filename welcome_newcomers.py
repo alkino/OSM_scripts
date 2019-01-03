@@ -102,7 +102,7 @@ def getuserlist(country):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-u', '--user', help='Username to connect to osm.org', required=True)
-    parser.add_argument('-p', '--password', help='Password associated to user for connection', required=True)
+    parser.add_argument('-p', '--password', help='Password associated to user for connection', required=True, type=argparse.FileType('r'))
     parser.add_argument('-t', '--title', help='Title of the PM', default='Welcome to you!')
     parser.add_argument('--pm-file', help='File of message for PM', type=argparse.FileType('r'))
     parser.add_argument('--comment-file', help='File of message for comment', type=argparse.FileType('r'))
@@ -111,9 +111,11 @@ if __name__ == "__main__":
     parser.add_argument('--always-send-PM', help='Send PM event if changeset is considered invalid', action='store_true')
     args = parser.parse_args()
 
+    password = args.password.read().strip()
+
     s = requests.Session()
-    s.auth = (args.user, args.password) # auth for API
-    login(s, args.user, args.password)  # login for PM
+    s.auth = (args.user, password) # auth for API
+    login(s, args.user, password)  # login for PM
     for user, changeset in getuserlist(args.country):
         if changesetisvalid(s, changeset):
             if args.pm_file:
